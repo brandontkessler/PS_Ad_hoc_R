@@ -1,0 +1,103 @@
+---
+title: "AB_Example_Analysis"
+author: "Brandon Kessler"
+date: "April 11, 2019"
+output: 
+  html_document:
+    code_folding: show
+    toc: TRUE
+    toc_float: TRUE
+---
+```{r, include = FALSE}
+rm(list=ls())
+library(tidyverse)
+```
+
+
+## Example - AB Test - Direct Mail/No Direct Mail
+
+Here's an example of the analysis that I will do on the AB test we discussed regarding receiving direct mail and not receiving direct mail. Let's assume that our list has 10,000 customers that we're sending the mailing to. We randomly split that list (and to Jean's point it doesn't have to be split in half) to have 7500 people getting the direct mail and the other 2500 not getting it. All other communication must remain constant to get unbiased results and the split must be randomized as well.
+
+```{r}
+population <- 10000
+
+receive_mail <- 7500
+no_receive_mail <- 2500
+```
+
+From here, we will get some results. Let's make up some results below:
+
+```{r}
+receive.purchase <- 1225
+no_receive.purchase <- 375
+```
+
+Now, we can develop a distribution by simulating the expected results across each campaign a million times (this is called a Monte Carlo simulation):
+
+```{r}
+sim <- 1000000
+receive_samples <- rbeta(sim, receive.purchase, receive_mail - receive.purchase)
+no_receive_samples <- rbeta(sim, no_receive.purchase, no_receive_mail - no_receive.purchase)
+```
+
+For simplicity we can now turn it into a usable dataframe:
+
+```{r}
+receive.df <- as.data.frame(receive_samples) %>%
+  rename(prob = 1) %>%
+  mutate(sample = "receive")
+
+no_receive.df <- as.data.frame(no_receive_samples) %>%
+  rename(prob = 1) %>%
+  mutate(sample = "no_receive")
+
+df <- rbind(receive.df, no_receive.df)
+```
+
+
+Then we can come up with a useful density curve to display results:
+
+
+```{r}
+ggplot(df, aes(x=prob, fill=sample)) +
+  geom_density(color=NA, alpha = 0.25)
+```
+
+In this example, it would appear that receiving mail is better than not, however, because the confidence intervals overlap, we cannot say for 100% certainty that receiving mail is better than not receiving. It could be the case that as the sample size grows, we may find different results.
+
+The no receive curve has a wider confidence interval because we have less samples which impacts the simulation in having less confident results and therefore more spread.
+
+We can think about this in a few different ways: 
+1) We don't have enough information and we must continue to test (if we were to continue to test and had the exact same conversion rates the only difference we would see are narrower density curves meaning we are more confident in the expected value from the tests).
+2) The difference between receiving and not receiving (even looking at it from the low end of no_receive and high end of receive) does not outway the cost that we incur in hiring EMG.
+3) We make the decision that this is enough information and provides enough confidence that direct mail is significantly better than not.
+
+
+Let's look at another scenario where the results may be different than above. Let's say that instead of having 1225 conversions for receive mail we have 1500:
+
+```{r, echo = FALSE}
+receive.purchase2 <- 1500
+
+receive_samples2 <- rbeta(sim, receive.purchase2, receive_mail - receive.purchase2)
+
+receive.df2 <- as.data.frame(receive_samples2) %>%
+  rename(prob = 1) %>%
+  mutate(sample = "receive")
+
+
+df2 <- rbind(receive.df2, no_receive.df)
+
+
+ggplot(df2, aes(x=prob, fill=sample)) +
+  geom_density(color=NA, alpha = 0.25)
+```
+
+Now, we can say with 100% certainty that direct mail makes a direct impact on conversions as opposed to no mail.
+
+However, this again does not say whether the ROI on EMG is valuable, just that we can say with 100% certainty that direct mail does influence purchasing behavior.
+
+Let's assume that we do land on this result, we can either model out a cost savings to return ROI or further, model a reallocation of resources to determine if there is a more effective means to spend that money.
+
+Another option would be to test direct mail against some other means to really know for sure. Maybe that means is email marketing, maybe it's telemarketing, maybe it's something else and then we can run the exact same tests.
+
+We can run any sort of test and determine actual efficacy statistically and not just based on a guess.

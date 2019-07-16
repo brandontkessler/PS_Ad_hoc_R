@@ -1,0 +1,152 @@
+---
+title: "Google Analytics - Age Group Analysis"
+author: "Brandon Kessler"
+date: "3/18/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+#############################################################################
+# SETUP
+rm(list=ls())
+
+library(tidyverse)
+library(googleAnalyticsR)
+
+ga_auth(".httr-oauth")
+my_accounts <- ga_account_list()
+ga_id <- 13471302
+
+start_date <- "2017-07-01"
+end_date <- "2018-06-30"
+
+# Where do website visitors come from?
+arrival_channel_byAge <- google_analytics(ga_id,
+                                   date_range = c(start_date, end_date),
+                                   metrics = c("sessions"),
+                                   dimensions = c("channelGrouping","userAgeBracket"))
+
+# Which age groups are converting?
+transactionRevenue_byAge <- google_analytics(ga_id,
+                                             date_range = c(start_date, end_date),
+                                             metrics = c("transactionRevenue"),
+                                             dimensions = c("userAgeBracket"))
+
+transactions_byAge <- google_analytics(ga_id,
+                                       date_range = c(start_date, end_date),
+                                       metrics = c("transactions"),
+                                       dimensions = c("userAgeBracket"))
+
+# Where do website visitors bounce?
+exitPage_byAge <- google_analytics(ga_id,
+                                   date_range = c(start_date, end_date),
+                                   metrics = c("sessions"),
+                                   dimensions = c("exitPagePath","userAgeBracket")) %>%
+  spread(key = userAgeBracket,value = sessions, fill = 0) %>%
+  mutate(total = rowSums(.[2:7])) %>%
+  arrange(desc(total)) %>%
+  head(10) %>%
+  select(-total) %>%
+  gather(key = 'userAgeBracket', value = 'sessions', 2:7) %>%
+  arrange(userAgeBracket,desc(sessions))
+
+```
+## Overview
+The following analysis is a quick age overview against the Pacific Symphony website. The data comes from Google Analytics API and is covering the 2018 fiscal year (2017-07-01 - 2018-06-30). 
+
+
+## Sessions
+We can start by looking at the total number of sessions coming from each age group
+
+```{r, echo=FALSE}
+ggplot(arrival_channel_byAge,
+       aes(x = userAgeBracket,
+           y = sessions)) + 
+  geom_bar(stat = 'identity', fill = '#151E5B') + 
+  ggtitle('Total Sessions by Age Group') + 
+  theme_bw()
+```
+
+As we can see, the top two age brackets for sessions on the website come from the 25-34 age group and the 35-44 age group.
+
+This would indicate that we are able to drive interest to the 25-44 age group to at least visit our website and check out what we're offering.
+
+## Transaction Revenue
+
+The next step is to look at the revenue generated from each of those age groups via the website..
+
+```{r, echo=FALSE}
+
+ggplot(transactionRevenue_byAge,
+       aes(x = userAgeBracket,
+           y = transactionRevenue)) + 
+  geom_bar(stat = 'identity', fill = '#155B25') +
+  ggtitle('Transaction Revenue by Age Group') + 
+  theme_bw()
+
+```
+
+Interestingly, even though the top two categories in terms of sessions are from the 25-34 age group and the 35-44 age group, the revenue is driven from those aged 55+.
+
+## Number of Transactions
+
+Per Jean's insight, let's look at the number of transactions
+
+```{r, echo=FALSE}
+
+ggplot(transactions_byAge,
+       aes(x = userAgeBracket,
+           y = transactions)) + 
+  geom_bar(stat = 'identity', fill = '#155B25') +
+  ggtitle('Transactions by Age Group') + 
+  theme_bw()
+
+```
+
+New insight, based on above, we can now see that although revenue is being driven by the 55+ cohorts, the total transactions are being driven from the 35-54 age group. 
+
+## Arrivals
+
+Next we can look at where people are arriving from.
+
+```{r, echo=FALSE}
+ggplot(arrival_channel_byAge, 
+       aes(x = userAgeBracket,
+           y = sessions,
+           fill = factor(channelGrouping))) + 
+  geom_bar(stat = 'identity', position = 'dodge') + 
+  scale_fill_discrete(name = 'Arrival Page') + 
+  ggtitle('Arrival Channels by Age Group') +
+  theme_bw()
+```
+
+As we can see, the vast majority are coming from 'Organic Search' which can include any search engine including Google, Bing, Yahoo, etc. In second place, and by a long shot, is social media.
+
+The next highest is direct, meaning they typed 'www.pacificsymphony.org' into the URL bar. After that is a mix between Other, Social and Referral.
+
+Based on what we've seen over the last 60 days in the prior analysis, we are either improving at driving traffic through social media or we've done a good job promoting the current events through social media.
+
+## Exits
+
+Finally, we can look at which page each user group is exiting the website from. Because of the many pages within the website, the data used includes only the top ten in terms of page exits over the 2018 FY.
+
+```{r fig.width = 15, fig.height = 10, echo=FALSE}
+ggplot(exitPage_byAge, 
+       aes(x = userAgeBracket,
+           y = sessions,
+           fill = factor(exitPagePath))) + 
+  geom_bar(stat = 'identity', position = 'dodge') + 
+  scale_fill_discrete(name = 'Exit Page') + 
+  ggtitle('Exit Pages by Age Group') +
+  theme_bw()
+```
+
+Note: the exit page labeled "/" is known as the root page or the home page.. Meaning people exiting directly from 'www.pacificsymphony.org'
+
+Now we can see that the specific event pages fade out when aggregating over a longer time period. Interestingly, the 18-24 and 25-34 age groups are often coming to the site seeking employment opportunities and are visiting and exiting from the employment page. 
+
+What's worrying is that we are seeing significantly more people exiting from the cart/view page than from the cart/receipt page. Theoretically, when people have put tickets into their cart, they're expecting to make a purchase. Seeing so many exit the page from that point indicates that something occuring in that cart/view page is driving them away (likely the $18 upcharge??).
+
+We also see a lot of people exiting from the tickets page, especially at the younger age groups. This would likely indicate that while older age groups are less impacted by pricing, younger age groups are.
+
+This can obviously lead to deeper conversations that should be had across the whole marketing group.

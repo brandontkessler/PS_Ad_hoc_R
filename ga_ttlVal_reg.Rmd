@@ -1,0 +1,123 @@
+---
+title: "google_analytics"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(ggplot2)
+library(tidyverse)
+library(googleAnalyticsR)
+library(caTools)
+
+ga_id <- 13471302
+
+start_date <- "1000daysAgo"
+end_date <- "yesterday"
+start_date2 <- "1825daysAgo"
+end_date2 <- "1001daysAgo"
+metrics <- c("avgSessionDuration",
+            "uniquePageViews",
+            "impressions",
+            "avgTimeOnPage",
+            "adCost",
+            "newUsers",
+            "percentNewSessions",
+            "totalValue")
+dimensions <- c("date")
+
+ga_auth()
+
+load_data <- function(ga_id,start_date,end_date,start_date2,end_date2,metrics,dimensions){
+  df1 <- google_analytics(ga_id,
+                          date_range = c(start_date,end_date),
+                          metrics = metrics,
+                          dimensions = dimensions)
+
+  df2 <- google_analytics(ga_id,
+                          date_range = c(start_date2,end_date2),
+                          metrics = metrics,
+                          dimensions = dimensions)
+  
+  df <- rbind(df1,df2)
+  return(df)
+}
+```
+
+## Building DF
+
+Execute function to pull GA data for last 5 years by date
+
+```{r cars}
+df <- load_data(ga_id,start_date,end_date,start_date2,end_date2,metrics,dimensions)
+head(df)
+```
+
+## Relationships with value
+
+View relationships between independent variables and dependent variable (totalValue)
+
+```{r pressure, echo=FALSE}
+plot <- function(df,x,title){
+  ggplot(df,
+       aes(x = x, y = totalValue)) + 
+  geom_point() + 
+  ggtitle(title) + 
+  theme_bw()
+}
+
+plot(df,df$avgSessionDuration,'avgSessionDuration')
+plot(df,df$uniquePageViews,'uniquePageViews')
+plot(df,df$impressions,'impressions')
+plot(df,df$avgTimeOnPage,'avgTimeOnPage')
+plot(df,df$adCost,'adCost')
+plot(df,df$newUsers,'newUsers')
+plot(df,df$percentNewSessions,'percentNewSessions')
+
+```
+
+## Tranform DF if necessary and replot
+
+```{r}
+df <- df %>%
+  mutate(newUsers = log(newUsers))
+
+plot(df,df$avgSessionDuration,'avgSessionDuration')
+plot(df,df$uniquePageViews,'uniquePageViews')
+plot(df,df$impressions,'impressions')
+plot(df,df$avgTimeOnPage,'avgTimeOnPage')
+plot(df,df$adCost,'adCost')
+plot(df,df$newUsers,'newUsers')
+plot(df,df$percentNewSessions,'percentNewSessions')
+```
+
+
+## Split model into test and training sets
+
+```{r}
+split <- sample.split(df$totalValue, SplitRatio = 0.8)
+training_set <- subset(df, split == TRUE)
+test_set <- subset(df, split == FALSE)
+```
+
+## Build regressor and summarize from training set
+
+```{r}
+
+regressor <- lm(formula = totalValue ~ . - date - percentNewSessions,
+               data = training_set)
+summary(regressor)
+
+```
+
+## Predict Test Results
+
+```{r}
+y_pred <- data.frame(prediction = predict(regressor, newdata = test_set))
+
+y_pred$row_count <- c(1:nrow(y_pred))
+test_set$row_count <- c(1:nrow(y_pred))
+
+predicted_df <- left_join(test_set,y_pred,by='row_count') %>%
+  select(-row_count)
+
+```

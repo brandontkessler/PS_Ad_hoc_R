@@ -1,0 +1,167 @@
+---
+title: "fy20_perf_forecast"
+author: "Brandon Kessler"
+date: "March 28, 2019"
+output: 
+  html_document:
+    code_folding: show
+    toc: TRUE
+    toc_float: TRUE
+---
+
+```{r setup, include=FALSE}
+# SETUP
+
+# Clear all variables in workspace
+rm(list=ls())
+
+# Set wd
+setwd("U:/models")
+
+
+# libs
+library(tidyverse)
+library(lubridate)
+
+# import data
+df <- read.csv('/data/forecasting/perf_forecast_dataset_clx.csv') %>%
+  rename(Series = 1)
+
+df.to_pred <- df %>%
+  mutate(Month = as.factor(Month),
+         composer_tier = as.factor(composer_tier),
+         guest_artist_tier = as.factor(guest_artist_tier)) %>%
+  select(-Series,-Date,-FY,-Goal)
+```
+
+# 10yr Regression
+
+Through much testing, we have eliminated the following variables from the model as being statistically insignificant in predicting performance revenue:
+
+* human name in title (ie. Joyce Yang .....)
+
+* thanksgiving proximity (+/- one week of Thanksgiving)
+
+* Guest conductor (it doesn't matter if it's Carl or someone else)
+
+* guest other (have a guest artist that is not on piano or violin is irrelevent)
+
+* the word "plays" in title (ie. Watts plays Beethoven)
+
+* Having Beethoven, Mozart, or Tchaikovsky in the performance title
+
+* Prior year's sub tickets sold (interestingly, last year's flex sold does matter)
+
+* Number of words in the performance name
+
+* Rank of composer's works (ie. Beethoven's 9th is in his top 3 works)
+
+* Connections
+
+This leaves us with the following regression
+
+```{r, echo=FALSE}
+# regress
+df.lm <- lm(Revenue ~ .
+            - human_name_in_title
+            - thxgiving_prox
+            - Guest_Conductor
+            - guest_other
+            - word_plays
+            - name_Beethoven
+            - name_Mozart
+            - name_Tchaikovsky
+            - lag_subs_1yr
+            - number_of_words
+            - top_3_composer_rank
+            - connections,
+            data = df.to_pred)
+summary(df.lm)
+
+
+```
+
+Here we can see that the remaining variables are:
+
+* Month
+
+* Composer tier (ie. Beethoven is tier 1)
+
+* guest_Violin (guest artist playing violin)
+
+* guest_Piano (guest artist playing piano)
+
+* Opera
+
+* guest_artist_tier (this one can go either way in keeping or removing)
+
+* prior year's flex tickets sold (the more flex tickets sold last year, the less single ticket revenue we generate this year)
+
+Based on the R-squared, we can see that this model predicts 66% of the revenue and the remaining predictors are floating out in the world somewhere. These are likely to include things like:
+
+* Politics
+
+* Weather
+
+* Social media followers/engagements
+
+* Marketing spend
+
+* etc...
+
+# Model comparison
+
+```{r, echo=FALSE}
+y_pred <- as.data.frame(predict(df.lm, df.to_pred)) %>%
+  rename(prediction = 1)
+
+comparisons <- df %>%
+  select(Revenue, Goal) %>%
+  cbind(y_pred)
+
+sqrt_mse_pred <- sqrt(mean((df$Revenue - y_pred$prediction)^2))
+sqrt_mse_goal <- sqrt(mean((df$Revenue - df$Goal)^2))
+
+mape_pred <- mean(abs((df$Revenue - y_pred$prediction)/df$Revenue)* 100)
+mape_goal <- mean(abs((df$Revenue - df$Goal)/df$Revenue)* 100)
+
+print(paste0('The square root of MSE for my model is ',sqrt_mse_pred,' in comparison with your methods which have a square root of MSE of ',sqrt_mse_goal,'. This indicates that my model is roughly $5000 better at predicting the revenue generated per performance.'))
+
+```
+
+
+# Re-forecasting FY20
+
+Using my model we can re-forecast the performances for the FY20 Classics season.Below are the results:
+
+```{r, echo=FALSE}
+fy20_projections <- read.csv('/data/forecasting/projected_fy20_clx.csv') %>%
+  rename(perf = 1) %>%
+  select(-perf) %>%
+  mutate(Month = factor(Month),
+         composer_tier = factor(composer_tier),
+         guest_artist_tier = factor(guest_artist_tier)) %>%
+  select(-projected)
+
+fy20_pred <- as.data.frame(predict(df.lm,fy20_projections)) %>%
+  rename(prediction = 1)
+
+fy20_comparison <- read.csv('/data/forecasting/projected_fy20_clx.csv') %>%
+  rename(perf = 1) %>%
+  select(perf,projected) %>%
+  cbind(fy20_pred) %>%
+  mutate(difference = prediction - projected)
+
+
+head(fy20_comparison,nrow(fy20_comparison))
+```
+
+
+
+```{r, echo=FALSE}
+library(xlsx)
+write.xlsx(as.data.frame(comparisons),
+           'model_forecast_comparisons.xlsx')
+
+
+```

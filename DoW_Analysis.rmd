@@ -1,0 +1,627 @@
+---
+title: "DoW_Analysis"
+author: "Brandon Kessler"
+date: "March 22, 2019"
+output: 
+  html_document:
+    code_folding: show
+    toc: TRUE
+    toc_float: TRUE
+---
+
+
+```{r setup, include=FALSE}
+
+
+rm(list=ls())
+
+# libs
+library(tidyverse)
+library(lubridate)
+library(fpp2)
+library(plotly)
+
+# functions
+source('functions/data_import.R')
+
+# load the data
+data_list <- c('Clx19','Clx18','Clx17','Clx16')
+df.tix <- ticketing_data(data_list)
+df.donor <- donor_data()
+
+# donor formatting
+df.donor.frmtd <- df.donor %>%
+  group_by(summary_cust_id) %>%
+  summarise(amt_5yr = sum(gift_plus_pledge)) %>%
+  mutate(donor_group = ifelse(amt_5yr >= 500000,'A',
+                              ifelse(amt_5yr >= 250000,'B',
+                                     ifelse(amt_5yr >= 100000,'C',
+                                            ifelse(amt_5yr >= 50000,'D',
+                                                   ifelse(amt_5yr >= 10000,'E',
+                                                          ifelse(amt_5yr >= 1000,'F',
+                                                                 ifelse(amt_5yr >= 10,'G',
+                                                                        'H')))))))) %>%
+  select(-amt_5yr)
+
+# tix formatting
+df.tix.frmtd <- df.tix %>%
+  mutate(price_type_group = ifelse(price_type_group == 'Single ' | price_type_group == 'Discount',
+                                   'Single',
+                                   ifelse(price_type_group == 'Subscription',
+                                          'Subscription',
+                                          ifelse(price_type_group == 'Flex','Flex',
+                                                 ifelse(price_type_group == 'Comp','Comp','Unsold')))),
+         price_zone = substr(zone_desc,1,7),
+         day_of_week = weekdays(perf_dt)) %>%
+  select(perf_dt,paid_amt,summary_cust_id,price_zone,day_of_week,price_type_group,attended)
+
+# UNSOLD
+df.unsold <- df.tix.frmtd %>%
+  filter(price_type_group == 'Unsold') %>%
+  mutate(day_of_week = factor(day_of_week))
+
+# SOLD
+df.sold <- df.tix.frmtd %>%
+  filter(price_type_group != 'Unsold') %>%
+  merge(df.donor.frmtd, by = 'summary_cust_id', all.x = TRUE) %>%
+  mutate(donor_grp = ifelse(is.na(donor_group),'H',donor_group)) %>%
+  select(-donor_group) %>%
+  mutate(day_of_week = factor(day_of_week),
+         attended = ifelse(attended == "Attended",1,0))
+
+```
+
+# Intro
+
+This is an analysis regarding the conversation we had earlier in the week regarding the possibility of reducing the Classics performances from three nights to two. Below is an analysis for Classics performances over the last four years including 2019 (FY16-19). 
+
+The analysis starts at a high level and drills down further as it goes on.
+
+In regards to the donor sections, groups are determined based on 5yr donation totals as described below:
+* Group A - $500K+
+* Group B - $250-500K
+* Group C - $100-250K
+* Group D - $50-100K
+* Group E - $10-50K
+* Group F - $1-10K
+* Group G - <$1K
+* Group H - No Donation
+
+
+# Totals
+
+```{r, echo=FALSE}
+total_rev <- df.sold %>%
+  filter(day_of_week != 'Tuesday') %>%
+  group_by(day_of_week) %>%
+  summarise(rev = sum(paid_amt))
+
+ggplot(total_rev, aes(x=day_of_week, fill = day_of_week)) +
+  geom_bar(aes(y = rev), stat="identity", show.legend = FALSE, color = 'black') +
+  scale_y_continuous(labels = function(x) format(x, scientific = FALSE)) +
+  theme_bw() +
+  ggtitle('Revenue by DoW') + 
+  scale_x_discrete(limits = c('Thursday','Friday','Saturday'))
+
+```
+
+### Revenue
+
+We can simply start by analyzing revenue for each day of the week. As expected, Saturday has performed the best and Friday the worst.
+
+Next, we can look at the tickets sold and the attendance for each day of the week:
+
+```{r, echo=FALSE}
+tix_sold <- df.sold %>%
+  filter(day_of_week != 'Tuesday',
+         price_type_group != 'Comp') %>%
+  group_by(day_of_week) %>%
+  summarise(tix_sold = n(),
+            attended = (sum(attended)/tix_sold)*tix_sold) %>%
+  gather(key = category, value = count, -day_of_week)
+
+ggplot(tix_sold, aes(y = count, x = day_of_week, group = category, fill = category)) +
+  geom_bar(stat="identity", width = 0.5, position = 'dodge', color = 'black') +
+  scale_y_continuous(labels = function(x) format(x, scientific = FALSE)) +
+  theme_bw() +
+  ggtitle('Tickets Sold/Attended by DoW (excluding Comps)') + 
+  scale_x_discrete(limits = c('Thursday','Friday','Saturday'))
+
+```
+
+As noted in the title of the graph, this is excluding comped tickets. Tickets sold are in line with what we'd expect from each day of the week and attendance percentage is practically on par for each day as well.
+
+### Comps
+
+Continuing on, we can look at the number of comped tickets each day:
+
+```{r, echo=FALSE}
+comps <- df.sold %>%
+  filter(day_of_week != 'Tuesday',
+         price_type_group == 'Comp') %>%
+  group_by(day_of_week) %>%
+  summarise(count = n())
+
+ggplot(comps, aes(y = count, x=day_of_week, fill = day_of_week)) +
+  geom_bar(stat="identity", show.legend = FALSE, color = 'black') +
+  scale_y_continuous(labels = function(x) format(x, scientific = FALSE)) +
+  theme_bw() +
+  ggtitle('Tickets Comped by DoW') + 
+  scale_x_discrete(limits = c('Thursday','Friday','Saturday'))
+
+```
+
+Unexpectedly, Saturday is our highest comp day. I would have expected to see the exact opposite of what we saw with the revenue plot with Friday as the highest, then Thursday, then Saturday. I'm not sure what to make of this other than this is when artists are asking for family tickets, but I can't say for certain.
+
+### Subscriptions
+
+Next, we can look at subscriptions:
+
+```{r, echo=FALSE}
+subs <- df.sold %>%
+  filter(day_of_week != 'Tuesday',
+         price_type_group == 'Subscription' | price_type_group == 'Flex') %>%
+  group_by(day_of_week, price_type_group) %>%
+  summarise(subscribers = length(unique(summary_cust_id)),
+            rev = sum(paid_amt))
+
+ggplot(subs, aes(y = subscribers, x = day_of_week, group = price_type_group, fill = price_type_group)) + 
+  geom_bar(stat = "identity", position='dodge', width = 0.4, color = 'black') + 
+  scale_y_continuous(labels = function(x) format(x, scientific = FALSE)) +
+  theme_bw() +
+  ggtitle('Number of Subscribers by DoW') + 
+  scale_x_discrete(limits = c('Thursday','Friday','Saturday'))
+
+
+```
+
+This gives us a breakdown of Flex subscribers and regular subscribers across each day. As expected, the total subscribers are in line with what we see from revenue and tickets sold in terms of order by day of week however, it isn't like Friday is lacking in the subscriber area. Another thing to note is that Saturday dominates Flex.
+
+Continuing with subscribers, we can look at revenue:
+
+```{r, echo=FALSE}
+ggplot(subs, aes(y = rev, x = day_of_week, group = price_type_group, fill = price_type_group)) + 
+  geom_bar(stat = "identity", position='dodge', width = 0.4, color = 'black') + 
+  scale_y_continuous(labels = function(x) format(x, scientific = FALSE)) +
+  theme_bw() +
+  ggtitle('Sub Revenue by DoW') + 
+  scale_x_discrete(limits = c('Thursday','Friday','Saturday'))
+
+```
+
+Interestingly, Thursday produces the most subscription revenue of any day of the week for Classics performances.
+
+### Donors
+
+We can also look at how donors fall in this landscape: 
+
+```{r, echo=FALSE}
+donors <- df.sold %>%
+  filter(day_of_week != 'Tuesday',
+         donor_grp != 'H') %>%
+  group_by(day_of_week,donor_grp) %>%
+  summarise(donors = length(unique(summary_cust_id)))
+
+ggplot(donors, aes(y=donors, x=day_of_week, group=donor_grp, fill=donor_grp)) + 
+  geom_bar(stat = 'identity', position='dodge', width = 0.9, color = 'black') +
+  scale_y_continuous(labels = function(x) format(x, scientific = FALSE)) +
+  theme_bw() + 
+  ggtitle('Number of Donors by Group and DoW') + 
+  scale_x_discrete(limits = c('Thursday','Friday','Saturday'))
+
+```
+
+Here we can see the number of donors for each group as designated by their donation amounts in aggregate over the last 5 years. It's hard to tell the impact of the major donor groups since the graph is overwhelmed by the insignificant donor groups. We can get a better picture by focusing in on groups A-D which make up of 500K+, 250-500K, 100-250K, and 50-100K respectively:
+
+
+```{r, echo=FALSE}
+donors <- df.sold %>%
+  filter(day_of_week != 'Tuesday',
+         donor_grp != 'H',
+         donor_grp != 'G',
+         donor_grp != 'F',
+         donor_grp != 'E') %>%
+  group_by(day_of_week,donor_grp) %>%
+  summarise(donors = length(unique(summary_cust_id)))
+
+ggplot(donors, aes(y=donors, x=day_of_week, group=donor_grp, fill=donor_grp)) + 
+  geom_bar(stat = 'identity', position='dodge', width = 0.9, color = 'black') +
+  scale_y_continuous(labels = function(x) format(x, scientific = FALSE)) +
+  theme_bw() + 
+  ggtitle('Number of Donors by Group and DoW') + 
+  scale_x_discrete(limits = c('Thursday','Friday','Saturday'))
+
+```
+
+That's better. Now we can see the which days of the week our major donors are attending for Classics concerts. Interestingly, even though the majority of revenue, tickets sold, and even number of subscribers is highest on Saturday, the major donors are attending mostly on Thursday. Friday doesn't look too shabby either.
+
+
+# Price Zone
+
+Let's look at metrics broken out by the differing price zones each day.
+
+### Revenue
+
+Again, let's start by looking at the total revenue generated by each price zone:
+
+```{r, echo=FALSE}
+total_rev_pz <- df.sold %>%
+  filter(day_of_week != 'Tuesday') %>%
+  group_by(day_of_week,price_zone) %>%
+  summarise(rev = sum(paid_amt))
+
+ggplot(total_rev_pz, aes(y=rev, x=day_of_week, group=price_zone, fill=price_zone)) + 
+  geom_bar(stat = 'identity', position='dodge', width = 0.9, color = 'black') +
+  scale_y_continuous(labels = function(x) format(x, scientific = FALSE)) +
+  theme_bw() + 
+  ggtitle('Rev by Price Zone and DoW') + 
+  scale_x_discrete(limits = c('Thursday','Friday','Saturday'))
+
+```
+
+Now we can see where the revenue is coming from. Friday underperforms in every price zone in terms of revenue generated as compared to Thursday and Saturday.
+
+### Tickets Sold
+
+We can also look at it from the perspective of tickets sold:
+
+```{r, echo=FALSE}
+tix_sold_pz <- df.sold %>%
+  filter(day_of_week != 'Tuesday',
+         price_type_group != 'Comp') %>%
+  group_by(day_of_week,price_zone) %>%
+  summarise(tix_sold = n())
+
+ggplot(tix_sold_pz, aes(y = tix_sold, x = day_of_week, group = price_zone, fill = price_zone)) + 
+  geom_bar(stat = 'identity', position = 'dodge', width = 0.9, color = 'black') + 
+  scale_y_continuous(labels = function(x) format(x, scientific = FALSE)) +
+  theme_bw() + 
+  ggtitle('Tix Sold by Price Zone and DoW (Excluding Comps)') + 
+  scale_x_discrete(limits = c('Thursday','Friday','Saturday'))
+
+```
+
+Again, as explained in the title of the graph, this is excluding comps. We see a similar pattern in terms of tickets sold as we did with revenue generated. Friday, again, underperforms at each price zone compared to the other days.
+
+
+Taking it one step further, we can look at the percentage sold at each price zone given the seats designated for each:
+
+```{r, echo=FALSE}
+tix_sold_perc_pz <- df.unsold %>%
+  filter(day_of_week != 'Tuesday') %>%
+  group_by(day_of_week,price_zone) %>%
+  summarise(unsold = n()) %>%
+  merge(tix_sold_pz, by = c('day_of_week','price_zone')) %>%
+  group_by(day_of_week,price_zone) %>%
+  summarise(percentage_sold = tix_sold/(tix_sold + unsold))
+
+ggplot(tix_sold_perc_pz, aes(y = percentage_sold, x = day_of_week, group = price_zone, fill = price_zone)) + 
+  geom_bar(stat = 'identity', position = 'dodge', width = 0.75, color = 'black') + 
+  scale_y_continuous(labels = scales::percent) +
+  theme_bw() + 
+  ggtitle('Tix Sold Percentage by Price Zone and DoW') + 
+  scale_x_discrete(limits = c('Thursday','Friday','Saturday'))
+
+
+```
+
+This was interesting to me. It appears that even though we're selling significantly more tickets on Thursday than on Friday, we are at about the same percentage sold rates. My thought is that as we're selling more and more, we're opening up more availability and that's what is balancing out the Thursday percentage sold rates to match Friday's.
+
+Also interesting, price zone 2 is extremely low in demand.
+
+The last piece to note is that our sold percentages (excluding zone 2 and B) are in reverse order meaning price zone 1 is lowest and price zone 5 is by far the highest.
+
+### Average Ticket Price
+
+Next, we can analyze the average ticket price paid per price zone.
+
+```{r, echo=FALSE}
+avg_price_pz <- df.sold %>% 
+  filter(day_of_week != 'Tuesday',
+         price_type_group != 'Comp') %>%
+  group_by(day_of_week,price_zone) %>%
+  summarise(avg_price = sum(paid_amt)/n())
+
+ggplot(avg_price_pz, aes(y = avg_price, x = day_of_week, group = price_zone, fill = price_zone)) + 
+  geom_bar(stat = 'identity', position = 'dodge', width = 0.9, color = 'black') + 
+  scale_y_continuous(labels = function(x) format(x, scientific = FALSE)) +
+  theme_bw() + 
+  ggtitle('Avg Paid Ticket Price by Price Zone and DoW') + 
+  scale_x_discrete(limits = c('Thursday','Friday','Saturday'))
+
+
+```
+
+This is for both single and subscription tickets, we can see the average ticket prices for each price zone fall generally in the order you would expect. However, the ticket prices, due to promotions and discounts, are significantly less than their starting points for all but Price 5.
+
+I was also curious to separate this out for just single tickets to see the difference:
+
+```{r, echo=FALSE}
+avg_price_singles_pz <- df.sold %>% 
+  filter(day_of_week != 'Tuesday',
+         price_type_group == 'Single') %>%
+  group_by(day_of_week,price_zone) %>%
+  summarise(avg_price = sum(paid_amt)/n())
+
+ggplot(avg_price_singles_pz, aes(y = avg_price, x = day_of_week, group = price_zone, fill = price_zone)) + 
+  geom_bar(stat = 'identity', position = 'dodge', width = 0.9, color = 'black') + 
+  scale_y_continuous(labels = function(x) format(x, scientific = FALSE)) +
+  theme_bw() + 
+  ggtitle('Avg Paid Ticket Price of Singles by Price Zone and DoW') + 
+  scale_x_discrete(limits = c('Thursday','Friday','Saturday'))
+
+
+```
+
+What a difference. These prices are significantly lower and out of whack as compared to the average ticket prices across the combination of singles and subscribers. This would indicate that subscribers are propping up the average ticket prices while single ticket buyers are taking advantage of promotional opportunities to get cheaper tickets. We can also see that on Friday, price zone 1 and 2 are both CHEAPER than price zone 3 on average.
+
+### Comps
+
+Next, we can look at the comped tickets across the price zones and the attendance of them:
+
+```{r, echo=FALSE}
+comps_pz <- df.sold %>%
+  filter(day_of_week != 'Tuesday',
+         price_type_group == 'Comp') %>%
+  group_by(day_of_week,price_zone) %>%
+  summarise(comps = n(),
+            attendance = sum(attended)) %>%
+  gather(category, count, -price_zone, -day_of_week)
+
+ggplot(comps_pz, aes(y = count, x = day_of_week, group = price_zone, fill = category)) + 
+  geom_bar(stat = 'identity', position = 'dodge', width = 0.9, color = 'black') + 
+  scale_y_continuous(labels = function(x) format(x, scientific = FALSE)) +
+  theme_bw() + 
+  ggtitle('Comps and Attendance by Price Zone and DoW') + 
+  scale_x_discrete(limits = c('Thursday','Friday','Saturday'))
+
+
+```
+
+The orange bars show the attendance while the blue bar shows the total tickets that were comped. These are broken out from price zone 1-5 and B at the end. As we can see, price zone 1 has the vast majority of comped tickets. This is because we place comped tickets in the zones in order from 1-5 to fill in the emptyness.
+
+Ideally, we'd want to reverse the trend by selling out our best seats in the house (Zones 1 and 2) and therefore fill in the comps in the zones of lesser demand (Zones 4 and 5). As of right now, percentage sold is highest in 5 and lowest in 1. We need to fix that.
+
+### Attendance
+
+Next, I was curious of attendance rates within each price zone:
+
+```{r, echo=FALSE}
+attendance_pz <- df.sold %>%
+  filter(day_of_week != 'Tuesday',
+         price_type_group != 'Comp') %>%
+  group_by(day_of_week,price_zone) %>%
+  summarise(attendance = sum(attended)/n())
+
+ggplot(attendance_pz, aes(y = attendance, x = day_of_week, group = price_zone, fill = price_zone)) + 
+  geom_bar(stat = 'identity', position = 'dodge', width = 0.9, color = 'black') + 
+  scale_y_continuous(labels = function(x) format(x, scientific = FALSE)) +
+  theme_bw() + 
+  ggtitle('Attendance by Paid Ticket and Price Zone and DoW') + 
+  scale_x_discrete(limits = c('Thursday','Friday','Saturday'))
+
+
+```
+
+As we can see, the attendance rates hover around 80%, which is significantly better than the comped tickets which is closer to the 60-70 range. We've also seen that historically, attendance rates for single ticket buyers are in the low 90s meaning these are being pulled down by the subscriber attendance rates.
+
+### Subscribers
+
+We can now analyze subscribers across the price zones beginning with non-flex subscribers:
+
+```{r, echo=FALSE}
+subs_nonFlex_pz <- df.sold %>%
+  filter(day_of_week != 'Tuesday',
+         price_type_group == 'Subscription') %>%
+  group_by(day_of_week, price_zone, price_type_group) %>%
+  summarise(subscribers = length(unique(summary_cust_id)),
+            rev = sum(paid_amt))
+
+ggplot(subs_nonFlex_pz, aes(y = subscribers, x = day_of_week, group = price_zone, fill = price_zone)) + 
+  geom_bar(stat = "identity", position='dodge', width = 0.9, color = 'black') + 
+  scale_y_continuous(labels = function(x) format(x, scientific = FALSE)) +
+  theme_bw() +
+  ggtitle('Number of Non-Flex Subscribers by DoW') + 
+  scale_x_discrete(limits = c('Thursday','Friday','Saturday'))
+
+```
+
+```{r, echo=FALSE}
+ggplot(subs_nonFlex_pz, aes(y = rev, x = day_of_week, group = price_zone, fill = price_zone)) + 
+  geom_bar(stat = "identity", position='dodge', width = 0.9, color = 'black') + 
+  scale_y_continuous(labels = function(x) format(x, scientific = FALSE)) +
+  theme_bw() +
+  ggtitle('Non-Flex Sub Revenue by DoW') + 
+  scale_x_discrete(limits = c('Thursday','Friday','Saturday'))
+
+```
+
+Again, as expected the number of non-flex subscribers are slightly greater on Thursday and Saturday, but not by a whole lot. However, the revenue generated is significantly higher on Thursday and Saturday as compared to Friday. You can see that just by looking at the revenue generated by price zone 1 alone.
+
+We can do this same analysis for Flex subscribers to see how they look:
+
+```{r, echo=FALSE}
+subs_flex_pz <- df.sold %>%
+  filter(day_of_week != 'Tuesday',
+         price_type_group == 'Flex') %>%
+  group_by(day_of_week, price_zone, price_type_group) %>%
+  summarise(subscribers = length(unique(summary_cust_id)),
+            rev = sum(paid_amt))
+
+ggplot(subs_flex_pz, aes(y = subscribers, x = day_of_week, group = price_zone, fill = price_zone)) + 
+  geom_bar(stat = "identity", position='dodge', width = 0.9, color = 'black') + 
+  scale_y_continuous(labels = function(x) format(x, scientific = FALSE)) +
+  theme_bw() +
+  ggtitle('Number of Flex Subscribers by DoW') + 
+  scale_x_discrete(limits = c('Thursday','Friday','Saturday'))
+
+```
+
+```{r, echo=FALSE}
+ggplot(subs_flex_pz, aes(y = rev, x = day_of_week, group = price_zone, fill = price_zone)) + 
+  geom_bar(stat = "identity", position='dodge', width = 0.9, color = 'black') + 
+  scale_y_continuous(labels = function(x) format(x, scientific = FALSE)) +
+  theme_bw() +
+  ggtitle('Flex Sub Revenue by DoW') + 
+  scale_x_discrete(limits = c('Thursday','Friday','Saturday'))
+
+
+```
+
+
+As indicated previously, Saturday dominates the Flex game. There's not a whole lot to take away from here other than what we already know. And that it appears that we treat Flex similarly to how we treat Comps: Provide price zone 1 first to try to fill up those seats and then move down the line. 
+
+One thing to note is that there were a few Flex tickets designated in Box Circle on Saturday as indicated by the pink bar. I'm not sure what that means but my assumption is that those are upgraded tickets...
+
+### Donors
+
+Continuing on, we can look at the donor groups by price zone (These are aggregate totals across A-D):
+
+```{r, echo=FALSE}
+donors_ABCD_pz <- df.sold %>%
+  filter(day_of_week != 'Tuesday',
+         donor_grp == 'A' | donor_grp == 'B' | donor_grp == 'C' | donor_grp == 'D') %>%
+  group_by(day_of_week,price_zone) %>%
+  summarise(donors = length(unique(summary_cust_id)))
+
+ggplot(donors_ABCD_pz,
+       aes(y=donors, x=day_of_week, group=price_zone, fill=price_zone)) + 
+  geom_bar(stat = 'identity', position='dodge', width = 0.75, color = 'black') +
+  scale_y_continuous(labels = function(x) format(x, scientific = FALSE)) +
+  theme_bw() + 
+  ggtitle('Number of A,B,C,D Donors by Price Zone and DoW') + 
+  scale_x_discrete(limits = c('Thursday','Friday','Saturday'))
+
+
+```
+
+One thing to keep in mind while reading this graph, donors who have sat in multiple price zones (ie. price 1 and B) will appear in each category.
+
+As expected, the majority of our major donors have sat in price zone 1 and also as expected, many of our donors either have or have had the opportunity to sit in Box Circle as well. We have significantly more major donors on Thursday than the other days.
+
+
+# Time Series
+
+I was also curious to look at how these trends have occurred over time.
+
+
+
+```{r, echo=FALSE}
+df.monthly <- df.sold %>%
+  filter(day_of_week != 'Tuesday',
+         price_type_group != 'Comp') %>%
+  mutate(month = as.Date(paste0(year(perf_dt),'-',month(perf_dt),'-1'))) %>%
+  group_by(month,day_of_week) %>%
+  summarise(rev_per_perf = sum(paid_amt)/length(unique(perf_dt)),
+            tix_sold = n())
+
+monthly.tix_sold <- df.monthly %>%
+  select(-rev_per_perf) %>%
+  spread(day_of_week, tix_sold)
+
+monthly.rev_per_perf <- df.monthly %>%
+  select(-tix_sold) %>%
+  spread(day_of_week, rev_per_perf)
+
+
+# Create a monthly factor to merge with df.monthly to replace non-existent months with a 0
+tt <- as.data.frame(seq(as.Date('2015-10-1'),as.Date('2019-6-1'),'month')) %>%
+  rename(month = 1)
+
+monthly.tix_sold <- merge(monthly.tix_sold, tt, by = 'month', all = TRUE) %>%
+  mutate(Friday = replace(Friday, is.na(Friday), 0),
+         Saturday = replace(Saturday, is.na(Saturday), 0),
+         Thursday = replace(Thursday, is.na(Thursday), 0))
+
+monthly.rev_per_perf <- merge(monthly.rev_per_perf, tt, by = 'month', all = TRUE) %>%
+  mutate(Friday = replace(Friday, is.na(Friday), 0),
+         Saturday = replace(Saturday, is.na(Saturday), 0),
+         Thursday = replace(Thursday, is.na(Thursday), 0))
+
+# Create time series
+ts.tix_sold <- ts(monthly.tix_sold[,c('Thursday','Friday','Saturday')],
+                  start = c(2015, 10),
+                  end = c(2019, 6),
+                  frequency = 12)
+
+ts.rev_per_perf <- ts(monthly.rev_per_perf[,c('Thursday','Friday','Saturday')],
+                      start = c(2015, 10),
+                      end = c(2019, 6),
+                      frequency = 12)
+
+# Polynomial degrees
+pol_deg <- 8
+
+```
+
+We can plot the data as a time series, looking at both revenue and tickets sold across the three different days. To do this, I took the average revenue per performance by day of week by month. Meaning that if there were 3 Thursday concerts in a month in a given year, I would add the revenue to each, divide by three, and designate that total as the revenue for Thursday concerts in that month, in that year. The same process was taken for tickets sold.
+
+### Tickets Sold
+
+Beginning with tickets sold:
+
+```{r, echo=FALSE}
+
+autoplot(ts.tix_sold) + 
+  ggtitle('Tix Sold per DoW')
+```
+
+Beginning with tickets sold, it's hard to see clearly, but it appears that Saturday has consistently performed highest but it also appears that in 2016 and parts of 17, Friday performed better than Thursday and dropped off in 2018 and 19.
+
+We can get a better view by providing a smoothing constant to get a better feel for the trends and seasonality experienced here.
+
+```{r, echo=FALSE}
+
+ggplot(monthly.tix_sold, aes(x = month)) + 
+  stat_smooth(aes(y = Thursday, color = 'Thursday'),
+              method = 'lm', 
+              formula = y ~ poly(x, degree = pol_deg),
+              se = FALSE) + 
+  stat_smooth(aes(y = Friday, color = 'Friday'),
+              method = 'lm', 
+              formula = y ~ poly(x, degree = pol_deg),
+              se = FALSE) +
+  stat_smooth(aes(y = Saturday, color = 'Saturday'),
+              method = 'lm', 
+              formula = y ~ poly(x, degree = pol_deg),
+              se = FALSE) +
+  ggtitle('Tix Sold per DoW (polynomial smoothing)') +
+  theme_bw()
+```
+
+For the most part, my initial viewpoint was wrong. There clearly was at lest a month in 2016 that Friday performed better than Thursday, but other than that, Thursday clearly has performed better.
+
+### Revenue
+
+We can do the same analysis for revenue as well:
+
+```{r, echo=FALSE}
+
+autoplot(ts.rev_per_perf) + 
+  ggtitle('Rev Per Performance per DoW')
+```
+
+Here we can clearly see that the order of performance is Saturday, Thursday, then Friday. But just to make it more clear, we can again introduce the polynomial smoothing constant:
+
+```{r, echo=FALSE}
+
+ggplot(monthly.rev_per_perf, aes(x = month)) + 
+  stat_smooth(aes(y = Thursday, color = 'Thursday'),
+              method = 'lm', 
+              formula = y ~ poly(x, degree = pol_deg),
+              se = FALSE) + 
+  stat_smooth(aes(y = Friday, color = 'Friday'),
+              method = 'lm', 
+              formula = y ~ poly(x, degree = pol_deg),
+              se = FALSE) +
+  stat_smooth(aes(y = Saturday, color = 'Saturday'),
+              method = 'lm', 
+              formula = y ~ poly(x, degree = pol_deg),
+              se = FALSE) +
+  ggtitle('Revenue per Performance per DoW (polynomial smoothing)') +
+  theme_bw()
+```
+
+And as expected, Saturday, Thursday, then Friday. There is a small dip in 2018 for Thursday, but it would appear that there was a month in 2018 that didn't have a Classics concert on a Thursday. Maybe this had to do with opera or it could be right at the end of the month (for example: Thursday was on September 30 and Friday on October 1 meaning the revenue for the Thursday concert in the series was picked up in September while the rest of the series October and there were no other concerts on Thursday in October).
+
+

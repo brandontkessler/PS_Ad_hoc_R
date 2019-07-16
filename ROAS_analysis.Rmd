@@ -1,0 +1,101 @@
+---
+title: "ga_adWords"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+library(ggplot2)
+library(tidyverse)
+library(googleAnalyticsR)
+library(caTools)
+
+ga_id <- 13471302
+
+# 5yr range
+start_date <- "1825daysAgo"
+end_date <- "yesterday"
+
+metrics <- c("impressions","CPM","adClicks","CPC","totalValue","RPC","ROAS")
+dimensions <- c("adGroup")
+
+ga_auth()
+
+load_data <- function(ga_id,start_date,end_date,metrics,dimensions){
+  df <- google_analytics(ga_id,
+                         date_range = c(start_date,end_date),
+                         metrics = metrics,
+                         dimensions = dimensions)
+
+  return(df)
+}
+```
+
+## Build DF and view sample
+
+After building data frame, output 10 random rows to view structure of data set
+
+```{r cars}
+df <- load_data(ga_id,start_date,end_date,metrics,dimensions)
+df[sample(nrow(df), 10),]
+
+```
+
+## View some summary statistics
+```{r}
+knit_print(summary(df))
+```
+
+## Set top 20 ad groups by ROAS
+
+**ROAS - Return on Ad Spend**
+This is a metric that measures the revenue from ad campaign divided by cost of ad campaign.
+In other words, it measures the incremental increase in revenue from an increase in dollar spend on ads.
+We are looking at this per adGroup to determine the best performing ad groups.
+
+
+```{r}
+top20_ROAS <- df %>%
+  arrange(desc(ROAS))
+
+top20_ROAS$adGroup <- factor(top20_ROAS$adGroup, levels = top20_ROAS$adGroup[order(top20_ROAS$ROAS)])
+  
+top20_ROAS <- top20_ROAS[1:20,]
+top20_ROAS
+```
+## Plot top 20 ad groups by ROAS
+
+```{r}
+
+ggplot(top20_ROAS, aes(x=adGroup,y=ROAS)) +
+  geom_bar(stat="identity", fill='dodgerblue2') +
+  labs(title="top 20 ROAS by adGroup") + 
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle=65, vjust=1, hjust=1))
+
+```
+
+## What impacts ROAS?
+We can see what other independent variables impact ROAS
+
+```{r}
+
+# 4 months worth of data
+
+new_start <- "120daysAgo"
+m2 <- c("ROAS","newUsers","adCost")
+d2 <- c('deviceCategory','date')
+
+df2 <- load_data(ga_id,new_start,end_date,m2,d2)
+
+levels <- unique(df2$deviceCategory)
+labels <- unique(df2$deviceCategory)
+
+df2$deviceCategory <- factor(df2$deviceCategory,
+                                  levels=levels)
+
+regressor <- lm(formula = ROAS ~ . - date, data = df2)
+summary(regressor)
+
+```

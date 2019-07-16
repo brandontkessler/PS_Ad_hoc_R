@@ -1,0 +1,104 @@
+---
+title: "ga_ad_spend"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(ggplot2)
+library(tidyverse)
+library(googleAnalyticsR)
+library(caTools)
+library(forecast)
+
+ga_id <- 13471302
+
+start_date <- "1000daysAgo"
+end_date <- "yesterday"
+start_date2 <- "1825daysAgo"
+end_date2 <- "1001daysAgo"
+metrics <- c("impressions",
+            "totalValue")
+dimensions <- c("date")
+
+ga_auth()
+
+load_data <- function(ga_id,start_date,end_date,start_date2,end_date2,metrics,dimensions){
+  df1 <- google_analytics(ga_id,
+                          date_range = c(start_date,end_date),
+                          metrics = metrics,
+                          dimensions = dimensions)
+
+  df2 <- google_analytics(ga_id,
+                          date_range = c(start_date2,end_date2),
+                          metrics = metrics,
+                          dimensions = dimensions)
+  
+  df <- rbind(df1,df2)
+  return(df)
+}
+```
+
+## Build DF and view sample
+
+Data is built over 5 year period and grouped by month
+Total value (totalValue) represents the total revenue earned as a result of website
+
+```{r cars}
+df <- load_data(ga_id,start_date,end_date,start_date2,end_date2,metrics,dimensions) %>%
+  group_by(month=floor_date(date, "month")) %>%
+  summarise(totalValue=sum(totalValue),
+            impressions=sum(impressions))
+
+head(df,n=10)
+
+```
+
+## Summary statistics
+
+Summary of total value and ad cost
+
+```{r}
+summary(df[,c('totalValue','impressions')])
+```
+
+
+## Plot data
+
+```{r}
+ggplot(df, aes(x = month)) +
+  geom_line(aes(y = totalValue), color = 'dodgerblue3') +
+  theme_bw()
+
+```
+
+## Seasonality and trend composition
+
+```{r}
+totalValue.ts <- ts(df$totalValue,
+                    start = c(2014, 2),
+                    end = c(2019, 2),
+                    frequency = 12)
+plot.ts(totalValue.ts)
+
+ts_decomp <- stl(totalValue.ts, s.window = "period")
+
+plot(ts_decomp)
+
+```
+
+## Fit with exponential triple smoothing
+
+```{r}
+fit <- ets(totalValue.ts)
+plot.ts(fit$residuals)
+accuracy(fit)
+
+```
+
+### Use the fit variable as part of the forecast function to predict future revenue
+```{r}
+totalValue_forecast <- forecast(fit,3)
+totalValue_forecast
+plot(totalValue_forecast)
+```
+

@@ -1,0 +1,291 @@
+---
+title: "DoW_Analysis - Additional"
+author: "Brandon Kessler"
+date: "March 27, 2019"
+output: 
+  html_document:
+    code_folding: show
+    toc: TRUE
+    toc_float: TRUE
+---
+
+
+```{r setup, include=FALSE}
+
+
+rm(list=ls())
+
+# libs
+library(tidyverse)
+library(lubridate)
+library(fpp2)
+library(plotly)
+
+# functions
+source('functions/data_import.R')
+
+# load the data
+data_list <- c('Clx19','Clx18','Clx17','Clx16')
+df.tix <- ticketing_data(data_list)
+df.donor <- donor_data()
+
+# donor formatting
+df.donor.frmtd <- df.donor %>%
+  group_by(summary_cust_id) %>%
+  summarise(amt_5yr = sum(gift_plus_pledge)) %>%
+  mutate(donor_group = ifelse(amt_5yr >= 500000,'A',
+                              ifelse(amt_5yr >= 250000,'B',
+                                     ifelse(amt_5yr >= 100000,'C',
+                                            ifelse(amt_5yr >= 50000,'D',
+                                                   ifelse(amt_5yr >= 10000,'E',
+                                                          ifelse(amt_5yr >= 1000,'F',
+                                                                 ifelse(amt_5yr >= 10,'G',
+                                                                        'H')))))))) %>%
+  select(-amt_5yr)
+
+# tix formatting
+df.tix.frmtd <- df.tix %>%
+  mutate(price_type_group = ifelse(price_type_group == 'Single ' | price_type_group == 'Discount',
+                                   'Single',
+                                   ifelse(price_type_group == 'Subscription',
+                                          'Subscription',
+                                          ifelse(price_type_group == 'Flex','Flex',
+                                                 ifelse(price_type_group == 'Comp','Comp','Unsold')))),
+         price_zone = substr(zone_desc,1,7),
+         day_of_week = weekdays(perf_dt)) %>%
+  select(perf_dt,paid_amt,summary_cust_id,price_zone,day_of_week,price_type_group,attended)
+
+# UNSOLD
+df.unsold <- df.tix.frmtd %>%
+  filter(price_type_group == 'Unsold') %>%
+  mutate(day_of_week = factor(day_of_week))
+
+# SOLD
+df.sold <- df.tix.frmtd %>%
+  filter(price_type_group != 'Unsold') %>%
+  merge(df.donor.frmtd, by = 'summary_cust_id', all.x = TRUE) %>%
+  mutate(donor_grp = ifelse(is.na(donor_group),'H',donor_group)) %>%
+  select(-donor_group) %>%
+  mutate(day_of_week = factor(day_of_week),
+         attended = ifelse(attended == "Attended",1,0))
+
+```
+
+# Intro
+
+This is an add on analysis to the DoW analysis completed before.
+
+
+# By FY
+```{r, echo=FALSE}
+total_by_fy <- df.sold %>%
+  mutate(fy = ifelse(perf_dt < as.Date('2016-07-01'),'16',
+                     ifelse(perf_dt < as.Date('2017-07-01'),'17',
+                            ifelse(perf_dt < as.Date('2018-07-01'),'18','19')))) %>%
+  filter(day_of_week != 'Tuesday') %>%
+  group_by(fy,day_of_week) %>%
+  summarise(rev = sum(paid_amt))
+
+
+ggplot(total_by_fy, aes(y = rev, x = day_of_week, group = fy, fill = fy)) +
+  geom_bar(stat="identity", width = 0.5, position = 'dodge', color = 'black') +
+  scale_y_continuous(labels = function(x) format(x, scientific = FALSE)) +
+  theme_bw() +
+  ggtitle('Revenue by DoW and FY') + 
+  scale_x_discrete(limits = c('Thursday','Friday','Saturday'))
+
+
+```
+
+As requested, we can analyze the length of subscription tenure for each day of the week.
+
+# Length of Sub Tenure
+
+```{r, echo=FALSE}
+sub_tenure <- df.sold %>%
+  mutate(fy = ifelse(perf_dt < as.Date('2016-07-01'),'fy16',
+                     ifelse(perf_dt < as.Date('2017-07-01'),'fy17',
+                            ifelse(perf_dt < as.Date('2018-07-01'),'fy18','fy19')))) %>%
+  filter(day_of_week != 'Tuesday',
+         price_type_group == 'Subscription') %>%
+  select(fy,day_of_week,summary_cust_id) %>%
+  unique() %>%
+  group_by(fy,day_of_week,summary_cust_id) %>%
+  summarise(tenure = n()) %>%
+  spread(key = fy, value = tenure) %>%
+  mutate(fy19 = ifelse(is.na(fy19),0,1)) %>%
+  filter(fy19 == 1) %>%
+  gather(key = fy, value = tenure, -day_of_week, -summary_cust_id) %>%
+  mutate(tenure = ifelse(is.na(tenure),0,1)) %>%
+  group_by(day_of_week,summary_cust_id) %>%
+  summarise(length_of_tenure = sum(tenure),
+            count = 1) %>%
+  group_by(day_of_week,length_of_tenure) %>%
+  summarise(subscribers = sum(count)) %>%
+  mutate(length_of_tenure = ifelse(length_of_tenure == 4, '4+',length_of_tenure))
+  
+
+ggplot(sub_tenure, aes(y = subscribers, x = day_of_week, group = length_of_tenure, fill = length_of_tenure)) +
+  geom_bar(stat="identity", width = 0.5, position = 'dodge', color = 'black') +
+  scale_y_continuous(labels = function(x) format(x, scientific = FALSE)) +
+  theme_bw() +
+  ggtitle('Length of Subscription Tenure by DoW') + 
+  scale_x_discrete(limits = c('Thursday','Friday','Saturday'))
+
+
+```
+
+Based on the results, it appears saturday has the most new subscribers in 2019 and Thursday has the most long term subscribers in 2019. I'm not sure how much additional information this adds but it confirms our expectations based on the prior day of week analysis.
+
+# Percent of Potential Revenue
+
+The next idea is to look at the percentage earned of the potential revenue. This is done by taking the revenue earned by each price zone, and dividing it by the potential revenue which is calculated using the base price. The base prices for Classical performances are as follows:
+
+Thurs/Fri:
+* Zone 1 = $121
+* Zone 2 = $91
+* Zone 3 = $71
+* Zone 4 = $41
+* Zone 5 = $25
+* Box = $199
+
+Saturday is $10 more expensive across the board.
+
+As an example of the calculation:
+Let's say there are 100 price zone 1 seats available on a Thursday performance. That means the total potential revenue is $121 * 100 = $12,100. Let's say we sold 80 seats at an average ticket price of $75. That means earned revenue is $75 * 80 = $6,000. That would indicate a percentage of potential revenue earned of 6000 / 12100 = 49.6%
+
+```{r, echo=FALSE}
+# Using PS Standard
+prices_by_zone <- data.frame('price_zone' = c('Price 1','Price 2','Price 3','Price 4','Price 5','Price B'),
+                             'Thursday' = c(121,91,71,41,25,199),
+                             'Friday' = c(121,91,71,41,25,199),
+                             'Saturday' = c(131,101,81,51,35,209)) %>%
+  gather(day_of_week,standard_price,-price_zone)
+
+percent_of_potential_rev.avail <- df.tix.frmtd %>%
+  filter(day_of_week != 'Tuesday') %>%
+  group_by(day_of_week,price_zone) %>%
+  summarise(available = n()) %>%
+  merge(prices_by_zone, by = c('day_of_week','price_zone'), all.x = TRUE) %>%
+  mutate(potential_rev = available * standard_price) %>%
+  select(-available,-standard_price)
+
+percent_of_potential_rev.sold <- df.sold %>%
+  filter(day_of_week != 'Tuesday') %>%
+  group_by(day_of_week,price_zone) %>%
+  summarise(earned_rev = sum(paid_amt))
+
+percent_of_potential_rev.fin <- percent_of_potential_rev.sold %>%
+  merge(percent_of_potential_rev.avail, by = c('day_of_week','price_zone')) %>%
+  mutate(percentage = earned_rev / potential_rev) %>%
+  select(-earned_rev,-potential_rev)
+
+ggplot(percent_of_potential_rev.fin, 
+       aes(y = percentage, x = day_of_week, group = price_zone, fill = price_zone)) +
+  geom_bar(stat="identity", width = 0.5, position = 'dodge', color = 'black') +
+  scale_y_continuous(labels = function(x) format(x, scientific = FALSE)) +
+  theme_bw() +
+  ggtitle('Percentage of Potential Revenue Earned by Price Zone and DoW') + 
+  scale_x_discrete(limits = c('Thursday','Friday','Saturday'))
+
+```
+
+We can see that for price zone 1, we are capturing between 30-40% of available revenue for all three days. Price zone 2 is the worst which coincides with our expectations based on what we saw in terms of percentage of tickets sold by each price zone. The maximum is price zone 5. Especially on Thursday and Friday. This would further indicate that prices do matter and that the cheaper the price zone, the closer we can get to capturing the full amount of potential revenue.
+
+The next concept to look at is the percentage sold as a discount, comp, or full price for each price zone and each day of the week.
+
+# Percent sold by Type
+
+```{r, echo=FALSE}
+percent_sold_at_discount_full_comp <- df.sold %>%
+  filter(day_of_week != 'Tuesday') %>%
+  merge(prices_by_zone, by = c('price_zone','day_of_week'), all.x = TRUE) %>%
+  mutate(sell_type = ifelse(price_type_group == 'Comp','Comp',
+                            ifelse(standard_price > paid_amt,'Discount','Full'))) %>%
+  group_by(day_of_week,price_zone,sell_type) %>%
+  summarise(tickets_sold = n())
+
+total_df <- percent_sold_at_discount_full_comp %>%
+  group_by(day_of_week,price_zone) %>%
+  summarise(total = sum(tickets_sold))
+
+percent_sold_at_discount_full_comp.fin <- percent_sold_at_discount_full_comp %>%
+  merge(total_df, by = c('day_of_week','price_zone'), all.x = TRUE) %>%
+  mutate(percent_sold = tickets_sold / total) %>%
+  select(-tickets_sold,-total)
+
+
+ggplot(percent_sold_at_discount_full_comp.fin %>% filter(day_of_week == 'Thursday'), 
+       aes(y = percent_sold, x = price_zone, group = sell_type, fill = sell_type)) +
+  geom_bar(stat="identity", color = 'black') +
+  scale_y_continuous(labels = function(x) format(x, scientific = FALSE)) +
+  theme_bw() +
+  ggtitle('Percentage Sold by Type and DoW/PriceZone - All Tix - Thursday')
+
+ggplot(percent_sold_at_discount_full_comp.fin %>% filter(day_of_week == 'Friday'), 
+       aes(y = percent_sold, x = price_zone, group = sell_type, fill = sell_type)) +
+  geom_bar(stat="identity", color = 'black') +
+  scale_y_continuous(labels = function(x) format(x, scientific = FALSE)) +
+  theme_bw() +
+  ggtitle('Percentage Sold by Type and DoW/PriceZone - All Tix - Friday')
+
+ggplot(percent_sold_at_discount_full_comp.fin %>% filter(day_of_week == 'Saturday'), 
+       aes(y = percent_sold, x = price_zone, group = sell_type, fill = sell_type)) +
+  geom_bar(stat="identity", color = 'black') +
+  scale_y_continuous(labels = function(x) format(x, scientific = FALSE)) +
+  theme_bw() +
+  ggtitle('Percentage Sold by Type and DoW/PriceZone - All Tix - Saturday')
+
+```
+
+From here was can see that almost all of our tickets in price zones 1 - 4 are either comped or discounted. The only price zone that we sell the majority of our tickets at full price is in zone 5, except for on Saturday's. This is likely because our base price on Saturday is supposed to be $10 higher across the board, but we sell for basically the same price.
+
+For example, price zone 5 on Thursday starts at $25 while price zone 5 on Saturday starts at $35. When we sell tickets on Thursday at $25, it shows as full price. When we sell tickets at $25 on Saturday it shows as a discount... Which it is... But this is likely the reason for the dramatic difference in discount vs full in price zone 5 for Saturday vs Thurs and Fri.
+
+Next, we can look at the same idea, but based on single tickets only. 
+
+```{r, echo=FALSE}
+percent_sold_at_discount_full_comp_singles <- df.sold %>%
+  filter(day_of_week != 'Tuesday',
+         price_type_group != 'Subscription',
+         price_type_group != 'Flex') %>%
+  merge(prices_by_zone, by = c('price_zone','day_of_week'), all.x = TRUE) %>%
+  mutate(sell_type = ifelse(price_type_group == 'Comp','Comp',
+                            ifelse(standard_price > paid_amt,'Discount','Full'))) %>%
+  group_by(day_of_week,price_zone,sell_type) %>%
+  summarise(tickets_sold = n())
+
+total_df <- percent_sold_at_discount_full_comp_singles %>%
+  group_by(day_of_week,price_zone) %>%
+  summarise(total = sum(tickets_sold))
+
+percent_sold_at_discount_full_comp_singles.fin <- percent_sold_at_discount_full_comp_singles %>%
+  merge(total_df, by = c('day_of_week','price_zone'), all.x = TRUE) %>%
+  mutate(percent_sold = tickets_sold / total) %>%
+  select(-tickets_sold,-total)
+
+
+ggplot(percent_sold_at_discount_full_comp_singles.fin %>% filter(day_of_week == 'Thursday'), 
+       aes(y = percent_sold, x = price_zone, group = sell_type, fill = sell_type)) +
+  geom_bar(stat="identity", color = 'black') +
+  scale_y_continuous(labels = function(x) format(x, scientific = FALSE)) +
+  theme_bw() +
+  ggtitle('Percentage Sold by Type and DoW/PriceZone - Single Tix - Thursday')
+
+ggplot(percent_sold_at_discount_full_comp_singles.fin %>% filter(day_of_week == 'Friday'), 
+       aes(y = percent_sold, x = price_zone, group = sell_type, fill = sell_type)) +
+  geom_bar(stat="identity", color = 'black') +
+  scale_y_continuous(labels = function(x) format(x, scientific = FALSE)) +
+  theme_bw() +
+  ggtitle('Percentage Sold by Type and DoW/PriceZone - Single Tix - Friday')
+
+ggplot(percent_sold_at_discount_full_comp_singles.fin %>% filter(day_of_week == 'Saturday'), 
+       aes(y = percent_sold, x = price_zone, group = sell_type, fill = sell_type)) +
+  geom_bar(stat="identity", color = 'black') +
+  scale_y_continuous(labels = function(x) format(x, scientific = FALSE)) +
+  theme_bw() +
+  ggtitle('Percentage Sold by Type and DoW/PriceZone - Single Tix - Saturday')
+
+```
+
+The pattern is very similar, though less dramatic on Price 5 for Saturday. I would suggest that is because the subscription prices are sold at a constant, especially flex, while single tickets are actually $10 more expensive on Saturday than Friday and Thursday.

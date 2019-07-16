@@ -1,0 +1,236 @@
+---
+title: "Age_group_data"
+date: "May 1, 2019"
+output: 
+  html_document:
+    code_folding: show
+    toc: TRUE
+    toc_float: TRUE
+---
+
+```{r setup, include=FALSE}
+rm(list = ls())
+
+library(tidyverse)
+library(lubridate)
+library(knitr)
+library(kableExtra)
+
+source("functions/data_import.R")
+
+df.clx <- ticketing_data('Clx19')
+df.pop <- ticketing_data('Pops19')
+df.donor <- donor_data() %>% 
+  group_by(summary_cust_id) %>%
+  summarise(donation_5yr = sum(gift_plus_pledge))
+df.birth.year <- read.csv("/data/active_user_info_birthyr.csv", skip = 7) %>%
+  rename(birth_year = key_value, summary_cust_id = customer_no) %>% 
+  filter(birth_year > 0) %>%
+  select(summary_cust_id, birth_year) %>%
+  mutate(age_group = ifelse(birth_year <= 1954, 
+                            "group_65_and_older",
+                            ifelse(birth_year <= 1974 & birth_year > 1954,
+                                   "group_45_to_64",
+                                   "under_44")))
+
+df.combo.subs <- ticketing_data(c('Clx19','Pops19')) %>%
+  filter(paid_amt > 0,
+         summary_cust_id != 0,
+         price_type_group == "Subscription") %>%
+  select("summary_cust_id") %>%
+  unique() %>%
+  mutate(sub = 1)
+
+format.df <- function(df) {
+  df <- df %>%
+    filter(paid_amt > 0,
+           summary_cust_id != 0,
+           perf_dt <= today()) %>%
+    mutate(zone = substr(zone_desc, 0, 7)) %>%
+    select(summary_cust_id, zone, paid_amt, price_type_group, attended) %>%
+    mutate(attended = ifelse(attended == "Attended", 1, 0)) %>%
+    merge(df.combo.subs, on = "summary_cust_id", all.x = TRUE) %>%
+    mutate(exclude = ifelse(price_type_group == "Single " & sub == 1,
+                             1,
+                             0),
+           exclude = ifelse(is.na(exclude), 0, exclude),
+           sub = ifelse(is.na(sub), 0, sub)) %>%
+    filter(exclude == 0) %>%
+    select(-sub, -exclude)
+  
+  return(df)
+}
+
+clx.formatted <- format.df(df.clx)
+pop.formatted <- format.df(df.pop)
+
+
+add.birth.year <- function(df) {
+  new_df <- df %>%
+    merge(df.birth.year, by = "summary_cust_id")
+  
+  return(new_df)
+}
+
+clx.add.birth.yr <- add.birth.year(clx.formatted)
+pop.add.birth.yr <- add.birth.year(pop.formatted)
+
+
+age.group.summary <- function(df) {
+  new_df <- df %>%
+    merge(df.donor, by = "summary_cust_id", all.x = TRUE) %>%
+    mutate(donation_5yr = ifelse(is.na(donation_5yr), 0, donation_5yr)) %>%
+    group_by(age_group, price_type_group, summary_cust_id) %>%
+    summarise(tix_transactions = n(),
+              paid_amt = sum(paid_amt),
+              donation_5yr = sum(donation_5yr) / n(),
+              attended = sum(attended)) %>%
+    ungroup() %>%
+    group_by(age_group, price_type_group) %>%
+    summarise(unique_customers = n(),
+              tix_transactions = sum(tix_transactions),
+              paid_amt = sum(paid_amt),
+              total_donations_5yr = sum(donation_5yr),
+              average_donations_5yr = mean(donation_5yr),
+              max_5yr_donation_amt = max(donation_5yr),
+              attended = sum(attended)) %>%
+    mutate(average_ticket_price = paid_amt / tix_transactions,
+           average_annual_donation = average_donations_5yr / 5,
+           attendance_rate = attended / tix_transactions)
+  
+  return(new_df)
+}
+
+
+clx.age.summary <- age.group.summary(clx.add.birth.yr)
+pop.age.summary <- age.group.summary(pop.add.birth.yr)
+```
+
+# Introduction
+
+Data included in the analysis are from Classics 2019 and Pops 2019 concerts excluding any tickets for performances occurring after today's date (5/1/2019).
+
+The following is an overview of our existing customers (FY 2019) based on age groups broken down as:
+
+* 65+
+* 45-64
+* under 44
+
+Birthdates are from Experian overlay data on customer numbers. This, therefore, does not include every single customer/household, as we don't have updated data, and it's on the customer number as opposed to summary customer ID number. We can try to update this later.
+
+Single ticket buyers are only including non-subscription single ticket buyers. Therefore, any customer that has a subscription (either pops or classics) will be excluded from any single ticket purchases.
+
+For example:
+
+If a customer has a subscription package for pops in FY19 and purchased a ticket to a classics concert in FY19, their information WILL be included as subscription in the pops analysis, but WILL NOT be included in the single data in the classics analysis.
+
+This DOES NOT include Flex. A flex purchaser may be included as both flex and single ticket buyer if that customer purchased both however, their ticketing data will only be included where those purchases were made. Meaning the customer's data may show up in more than one category (flex, single), but the actual data will be exclusive to the category of purchase (flex, single).
+
+This gives us a better understanding of the differences in purchasing and donation behavior between single ticket buyers and subscription buyers exclusively.
+
+
+# Ticketing
+
+Definitions of below categories:
+
+* age_group = age group being analyzed
+* price_type_group = sub, single, flex
+* unique_customers = the amount of unique customers according to the given section
+* tix_transactions = the total tickets purchased
+* paid_amt = sum of paid amount of all tickets in the given section
+* average_ticket_price = paid_amt / tix_transactions
+
+
+To demonstrate unique_customers and tix_transactions above:
+
+One customer purchasing two full classics sub packages will results in one unique_customers and 24 tix_transactions.
+
+
+## Classics Ticketing
+
+```{r echo = FALSE, results = 'asis'}
+
+clx.age.summary %>%
+  select(age_group, price_type_group, unique_customers, tix_transactions,
+         paid_amt, average_ticket_price, attendance_rate) %>%
+  kable() %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), font_size = 12) %>%
+  scroll_box(width = "100%")
+  
+```
+
+Beginning with classics FY19, the 65+ cohort purchased by far the most subscriptions and followed suit with the most singles and flex purchases as well. While they pay the highest average ticket price in singles and flex, the 45-54 group actually pays more per ticket for subscription packages.
+
+Attendance are significantly higher in the areas of flex and single as compared to subscription. While attendance rates for the 65+ age group that have subscriptions is the lowest.
+
+## Pops Ticketing
+
+```{r echo = FALSE, results = 'asis'}
+
+pop.age.summary %>%
+  select(age_group, price_type_group, unique_customers, tix_transactions,
+         paid_amt, average_ticket_price, attendance_rate) %>%
+  kable() %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), font_size = 12) %>%
+  scroll_box(width = "100%")
+  
+```
+
+With pops FY19, we see a similar pattern as with Classics though in this case, the 65+ group pays the highest ticket price on subscription packages as well.
+
+The attendance appears to be eratic. This could be due to a small sample size, especially in regards to the 45-64 single ticket group. In general, we do see significantly lower attendance rates for pops as compared to subscriptions. This could be due to specific concert appeal (ie. only a handful of the pops concerts are appealing enough to attend). 
+
+
+# Donations
+
+Definitions of below categories:
+
+* age_group = age group being analyzed
+* price_type_group = sub, single, flex
+* unique_customers = the amount of unique customers according to the given section
+* total_donations_5yr = aggregated donations for all unique customers in the given section over the last 5 years
+* average_donations_5yr = average 5 yr donation amount per each unique customer in the given section (total_donations_5yr / unique_customers)
+* max_5yr_donation_amt = The highest donation amount given by a single unique customer within the given section in total over the last 5 years
+* average_annual_donation = average_donations_5yr / 5
+
+## Classics Donations
+
+```{r echo = FALSE, results = 'asis'}
+
+clx.age.summary %>%
+  select(age_group, price_type_group, unique_customers, total_donations_5yr,
+         average_donations_5yr, max_5yr_donation_amt, average_annual_donation) %>%
+  kable() %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), font_size = 12) %>%
+  scroll_box(width = "100%")
+  
+```
+
+For our Classics 2019 group, we can see that although there are significantly more donors in the 65+ subscription group, the highest average annual donation amount comes from the 45-64 subscription group. Building on that, we can see the max amount is significantly higher in the 65+ group as compared to 45-64 indicating that extremely high outliers from that category are lifting their average annual donation amount which would mean that the 45-64 group is more stable and gives more than the 65+ group.  
+
+Another takeaway is that there are a large amount of donations coming from non-subscribers (single purchasers only) in the 65+ group indicating that while it may be true that younger generations should be subscribers prior to soliciting for donations, that is certainly not the case for 65+.
+
+
+
+## Pops Donations
+
+```{r echo = FALSE, results = 'asis'}
+
+pop.age.summary %>%
+  select(age_group, price_type_group, unique_customers, total_donations_5yr,
+         average_donations_5yr, max_5yr_donation_amt, average_annual_donation) %>%
+  kable() %>%
+  kable_styling(bootstrap_options = c("striped", "hover"), font_size = 12) %>%
+  scroll_box(width = "100%")
+  
+```
+
+From Pops, we see a similar story in regards to the average annual donation amount with 45-64 subscribers outperforming 65+ subs and a lower outlier indicator from the max donation amount as well again indicating, more stability, and higher donations coming from the 45-64 cohort. 
+
+Again, we see significantly higher average donation amounts in the 65+ singles compared to the 45-64 singles, but not as dramatic of a win compared with Classics. 
+
+Something to note, the max donation amount of the pops 45-64 subs and pops 65+ subs is identical to the Classics 45-64 subs and Classics 65+ subs which would indicate that either there is another customer making an identical 5yr donation amount or, the more likely scenario, that the customer making that donation amount is both a Classics and Pops subscriber. 
+
+# Conclusion
+
+The above analysis is meant to provide more insight into our customers from an age demographic perspective in terms of their purchasing and donor behaviors. This should help to better target customers from the standpoint of marketing and donor solicitation, as well as tailoring content creation to target a specific audience as some have been discussing internally already.

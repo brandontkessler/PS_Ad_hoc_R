@@ -1,0 +1,130 @@
+---
+title: "M264B - Problem Set 4 - Due 3/18/19"
+author: "704887134,204887122,604887605, 704878002"
+date: "3/12/2019"
+output: 
+  html_document:
+    code_folding: show
+    toc: TRUE
+    toc_float: TRUE
+---
+
+## Instructions  
+  
+This problem set is due by when class would normally start on Monday, March 18 (1:00pm Section 1, 7:10pm Section 2), if we were to have class on Monday, which we do not.  
+  
+You  may work in groups of up to 5 people. Please put every team member's UCLA ID number in the header above, inside the quotes next to "author". Please do not include names in this document, to ensure blind grading.  
+  
+You will need to submit TWO files: this .Rmd file, and the knitted HTML file. Each group should submit only ONE version of each file.  
+  
+The problem set is prepopulated with code chunks. Above each code chunk is a small header that describes exactly what output you need to report in your submitted files.  
+  
+```{r, message = FALSE}
+library(tidyverse)
+```
+
+## Data Details
+  
+This problem set focuses on further developing our understanding of logistic regression and model validation from Week 10, integrating concepts from prior weeks.
+  
+`nexus.Rds` on CCLE contains data on 500 YouTube viewers. The variables are as described below:  
+* `buy`: 0 = did not buy a Google Nexus smartphone; 1 = did buy a Nexus  
+* `view`: 0 = did not view a Nexus promo; 1 = did view a Nexus promo  
+* `totvids`: total number of YouTube videos watched in previous 6 months  
+* `elecvids`: total number of YouTube electronics videos watched in previous 6 months  
+* `browser`: type of internet browser used  
+* `device`: watched on Mobile vs. Desktop  
+* `age`: age  
+* `gender`: gender  
+
+`holdout.Rds` contains an additional sample of 500 viewers with those same variables. Questions 1 through 6 only use `nexus.Rds`. `holdout.Rds` is not used until question 7.
+
+## Q1
+
+Using logistic regression, model purchase as a function of watching the promo video (i.e., model `buy` as a function of `view`). We’ll call this Model 1.
+1. What is your predicted probability that someone who has not watched the promo video buys a Nexus? 
+2. What is your predicted probability that someone who has watched the promo video buys a Nexus?
+
+#### Your knitted file should include those two predicted probabilities.
+```{r}
+df.nexus <- readRDS("nexus.rds")
+
+```
+
+## Q2
+
+Why do we need to be cautious in making any claims about whether watching the promo video affected the probability of buying a Nexus?
+
+#### Your knitted file should include a brief written answer to the question above.
+
+## Q3
+
+Again using logistic regression, model the probability that an individual buys a Nexus as a function of all of the available predictors. (Note: you can use `buy ~ .` as a shortcut to include all other variables in the dataset as predictors, rather than listing each one individually). We’ll call this Model 2.  
+  
+What is the *residual deviance* of Model 2? (Note that if you wanted to use Model 2 to generate predicted probabilities, you would need to specify values for all of the variables. Unlike the linear models we've used previously in the course, the change in predicted probability attributed to `view` depends on the level of the other predictors in the model even though there are no interactions. This is because of the nonlinear transformation from log(odds) to probabilities.)
+
+#### Your knitted file should include the residual deviance of Model 2
+```{r}
+
+```
+
+## Q4
+
+Why might Model 2 still not be sufficient to establish a causal effect of views on purchase?
+
+#### Your knitted file should include a brief written answer to the question above.
+
+## Q5
+  
+Use `lrtest()` from the `lmtest` package to compare Model 2 to Model 1. (If you didn't install the `lmtest` package during Week 10, you'll need to do so now. Once you've done so, make sure the installation command is not in your R Markdown file as the file will not knit properly if it includes a package installation.) Notice the log likelihoods are listed under `LogLik` in the output. If you multiply those log likelihoods by -2, you should get the deviances you found above.  
+  
+The p-value indicates the probability of finding a reduction in deviance this big or bigger by chance alone if the null hypothesis that none of the additional predictors matter were true. Did the additional predictors significantly reduce the residual deviance? Include the p value.
+
+#### Your knitted file should include a written answer to the question above and include the p value.
+```{r}
+
+```
+
+## Q6
+
+Calculate the log likelihood for Model 2 directly using the steps below.  
+1. Calculate the predicted probability that buy = 1 for every datapoint.  
+2. Transform this predicted probability so that it represents the probability of the observed outcome. That is, if the observation is a purchase (buy = 1), then you want Pr(buy=1). If the observation was no purchase (buy = 0), then you want Pr(buy=0) = 1 – Pr(buy=1). For exmaple, if your dataset is called `nexus` and the predicted probabilities are called `pred_prob`, you could use the following code: `lik <- ifelse(nexus$buy == 1, pred_prob, 1 - pred_prob)`.
+3. The model likelihood is the *product* of all of the elements of `lik`. That will be a very small number! In this case, with only 500 observations, R can calculate it. More generally, however, as in the Lending Club example from Week 10, the model likelihood can be a small enough number that R will simply round it to 0. However, the log of a product is the sum of logs: 
+$log(X_1 \times X_2 \times X_3 \times ... \times X_N) = log(X_1) + log(X_2) + log(X_3) + ... + log(X_N)$. As a result, we can take the log of each of those individual probabilities and sum the logs to calculate the *log likelihood*. You could calculate the sum of the logs of the individaul observations' likelihoods by using `sum(log(lik))`.  
+Verify the log likelihood you calculated here matches the one you observed in (5). Verify that -2 * log(likelihood) matches the residual deviance you observed in (3).
+
+#### Your knitted file should include the log likelihood that you calculated in this step.
+```{r}
+
+```
+
+## Q7
+
+Validate Model 2 using the holdout sample (`holdout.Rds`). This requires a somewhat different than the approach we used in the slides, since we can’t use SSE or R2 for a logistic regression.  
+1. Use Model 2 (which you estimated using the original `nexus.Rds` data) to generate predicted *probabilities* for the holdout sample. Call them `pred_prob_out_samp`.  
+2. Using the approach from Q6 above, calculate the *deviance* of Model 2's predictions for the *holdout* sample. What is this deviance?  
+3. Model the probability of purchase in the holdout sample using all of the other variables, fitted using the holdout sample, and save this as Model 3. (Model 3 has the same set of predictors as Model 2. You’ve just estimated it using the holdout sample instead of the original sample.) What is the *residual deviance* of Model 3? Consider how this value compares to the value you calculated in step 2.
+
+#### Your knitted file should include the deviance from step 2, the deviance from step 3, and a brief statement describing why they compare in the way that they do.
+```{r}
+
+```
+
+## Q8
+
+Create two copies of the `holdout` data, one ordered by your in-sample (Model 3) predicted probabilities, and one ordered by your out-of-sample (Model 2) predicted probabilities. For example, if your dataset is called `holdout`, your out-of-sample Model 2 predictions for the holdout sample are called `pred_prob_out_samp`, and your in-sample Model 3 predictions for the holdout sample are called `pred_prob_in_samp`, the code below would create copies of the datasets ordered from lowest predicted probability to highest predicted probability using Model 2 and Model 3, respectively:
+`ordered_out <- arrange(holdout, pred_prob_out_samp)`
+`ordered_in <- arrange(holdout, pred_prob_in_samp)`
+1. What is the purchase rate for the lowest 20% of in-sample predictions (e.g., the first 100 observations, `ordered_in[1:100, ]`)? 
+2. What is the purchase rate for the highest 20% of in-sample predictions (e.g., the last 100 observations, e.g., `ordered_in[401:500, ]`)?
+3. What is the purchase rate for the lowest 20% of out-of-sample predictions?
+4. What is the purchase rate for the highest 20% of out-of-sample predictions?
+5. Consider why the answers to steps 1 and 2 differ from those in steps 3 and 4.
+  
+#### Your knitted file should include the purchase rates specified in steps 1-4, and a brief statement describing why the ones from in-sample fit compare to those from out-of-sample fit in the way that they do.
+```{r}
+
+```
+
+
